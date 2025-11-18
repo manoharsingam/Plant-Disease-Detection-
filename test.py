@@ -17,7 +17,7 @@ from tensorflow.keras.applications.efficientnet import preprocess_input
 MODEL_PATH = "model/perfect_fit_final.h5"
 DB_PATH = "users.db"
 IMG_SIZE = (300, 300)
-GEMINI_API_KEY = "AIzaSyCyWF6GaRIXOKVBXONnQAm69DJm1OmmqTk"
+GEMINI_API_KEY = ""
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
 
 CLASS_NAMES = [
