@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title data-default>ImageVault - Secure Image Analysis</title>
+    <link rel="stylesheet" href="./style.css">
+  </head>
+  <body>
+    <div id="app">
+
+      <!--Login-->
+
+      <div id="loginPage" class="page active">
+        <div class="background-animation">
+          <div class="floating-shape shape1"></div>
+          <div class="floating-shape shape2"></div>
+          <div class="floating-shape shape3"></div>
+        </div>
+
+        <div class="container">
+          <div class="login-card">
+            <div class="logo-container">
+              <div class="logo-icon">📸</div>
+              <h1 class="app-title">ImageVault</h1>
+            </div>
+
+            <form id="loginForm" class="form">
+              <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" required placeholder="Enter your username">
+              </div>
+
+              <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" required placeholder="Enter your email">
+              </div>
+
+              <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" required placeholder="Enter your password">
+              </div>
+
+              <button type="submit" class="btn-primary">
+                <span>Continue</span>
+                <div class="btn-glow"></div>
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- Home -->
+      <div id="homePage" class="page">
+        <div class="background-animation">
+          <div class="floating-shape shape1"></div>
+          <div class="floating-shape shape2"></div>
+          <div class="floating-shape shape3"></div>
+        </div>
+
+        <nav class="navbar">
+          <div class="nav-content">
+            <div class="nav-logo">
+              <span class="logo-icon">📸</span>
+              <span>ImageVault</span>
+            </div>
+            <div class="nav-user">
+              <span id="userGreeting">Welcome!</span>
+              <button id="logoutBtn" class="btn-logout">Logout</button>
+            </div>
+          </div>
+        </nav>
+
+        <div class="container home-container">
+          <div class="upload-section">
+            <h2 class="section-title">Upload Your Image</h2>
+            <p class="section-subtitle">Choose an option to get started</p>
+
+            <div class="upload-options">
+              <div class="upload-card" id="uploadCard">
+                <div class="upload-icon">📁</div>
+                <h3>Upload File</h3>
+                <p>Select an image from your device</p>
+                <input type="file" id="fileInput" accept="image/*" hidden>
+              </div>
+
+              <div class="upload-card" id="cameraCard">
+                <div class="upload-icon">📷</div>
+                <h3>Take Picture</h3>
+                <p>Capture using your camera</p>
+              </div>
+            </div>
+
+            <div id="previewSection" class="preview-section" style="display: none;">
+              <div class="preview-container">
+                <img id="imagePreview" src="" alt="Preview">
+                <button id="removeImage" class="btn-remove">✕</button>
+              </div>
+              <button id="analyzeBtn" class="btn-primary btn-analyze">
+                <span>Analyze Image</span>
+                <div class="btn-glow"></div>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Camera -->
+        <div id="cameraModal" class="modal">
+          <div class="modal-content camera-modal">
+            <button class="modal-close" id="closeCameraModal">✕</button>
+            <h3>Take a Picture</h3>
+            <video id="cameraStream" autoplay playsinline></video>
+            <canvas id="cameraCanvas" style="display: none;"></canvas>
+            <div class="camera-controls">
+              <button id="captureBtn" class="btn-primary">Capture</button>
+              <button id="cancelCameraBtn" class="btn-secondary">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Result -->
+      <div id="resultPage" class="page">
+        <div class="background-animation">
+          <div class="floating-shape shape1"></div>
+          <div class="floating-shape shape2"></div>
+          <div class="floating-shape shape3"></div>
+        </div>
+
+        <nav class="navbar">
+          <div class="nav-content">
+            <div class="nav-logo">
+              <span class="logo-icon">📸</span>
+              <span>ImageVault</span>
+            </div>
+            <div class="nav-user">
+              <button id="backToHomeBtn" class="btn-logout">Back to Home</button>
+            </div>
+          </div>
+        </nav>
+
+        <div class="container result-container">
+          <div class="result-section">
+            <h2 class="section-title">Analysis Results</h2>
+
+            <div class="result-grid">
+              <div class="result-image-container">
+                <img id="resultImage" src="" alt="Analyzed Image">
+              </div>
+
+              <div class="result-details">
+                <div id="loadingState" class="loading-state">
+                  <div class="spinner"></div>
+                  <p>Analyzing your image...</p>
+                </div>
+
+                <div id="resultContent" class="result-content" style="display: none;">
+                  <div class="result-card">
+                    <h3>📊 Analysis Summary</h3>
+                    <div id="resultData"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,139 @@
+
+
+
+
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ImageVault - Home</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+  <div id="app">
+
+    <!-- HOME PAGE -->
+    <div id="homePage" class="page active">
+      <div class="background-animation">
+        <div class="floating-shape shape1"></div>
+        <div class="floating-shape shape2"></div>
+        <div class="floating-shape shape3"></div>
+      </div>
+
+      <nav class="navbar">
+        <div class="nav-content">
+          <div class="nav-logo">
+            <span class="logo-icon">📸</span>
+            <span>ImageVault</span>
+          </div>
+          <div class="nav-user">
+            <span id="userGreeting">Welcome!</span>
+            <a href="/" class="btn-logout">Logout</a>
+          </div>
+        </div>
+      </nav>
+
+      <div class="container home-container">
+        <div class="upload-section">
+          <h2 class="section-title">Scan Your Leaf</h2>
+          <p class="section-subtitle">Upload or capture a leaf image to detect disease</p>
+
+          <div class="upload-options">
+            <div class="upload-card" id="uploadCard">
+              <div class="upload-icon">📁</div>
+              <h3>Upload File</h3>
+              <p>Select an image from your device</p>
+              <input type="file" id="fileInput" accept="image/*" hidden>
+            </div>
+
+            <div class="upload-card" id="cameraCard">
+              <div class="upload-icon">📷</div>
+              <h3>Take Picture</h3>
+              <p>Capture using your camera</p>
+            </div>
+          </div>
+
+          <div id="previewSection" class="preview-section" style="display: none;">
+            <div class="preview-container">
+              <img id="imagePreview" alt="Preview">
+              <button id="removeImage" class="btn-remove">✕</button>
+            </div>
+            <button id="analyzeBtn" class="btn-primary btn-analyze">
+              <span>Detect Disease</span>
+              <div class="btn-glow"></div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Camera Modal -->
+      <div id="cameraModal" class="modal">
+        <div class="modal-content camera-modal">
+          <button class="modal-close" id="closeCameraModal">✕</button>
+          <h3>Take a Picture</h3>
+          <video id="cameraStream" autoplay playsinline></video>
+          <canvas id="cameraCanvas" style="display:none;"></canvas>
+          <div class="camera-controls">
+            <button id="captureBtn" class="btn-primary">Capture</button>
+            <button id="cancelCameraBtn" class="btn-secondary">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RESULT PAGE -->
+    <div id="resultPage" class="page">
+      <div class="background-animation">
+        <div class="floating-shape shape1"></div>
+        <div class="floating-shape shape2"></div>
+        <div class="floating-shape shape3"></div>
+      </div>
+
+      <nav class="navbar">
+        <div class="nav-content">
+          <div class="nav-logo">
+            <span class="logo-icon">📸</span>
+            <span>ImageVault</span>
+          </div>
+          <div class="nav-user">
+            <button id="backToHomeBtn" class="btn-logout">Back to Home</button>
+          </div>
+        </div>
+      </nav>
+
+      <div class="container result-container">
+        <div class="result-section">
+          <h2 class="section-title">Detection Report</h2>
+
+          <div class="result-grid">
+            <div class="result-image-container">
+              <img id="resultImage" alt="Analyzed Image">
+            </div>
+
+            <div class="result-details">
+              <div id="loadingState" class="loading-state">
+                <div class="spinner"></div>
+                <p>Analyzing your image and fetching recommendations...</p>
+              </div>
+
+              <div id="resultContent" class="result-content" style="display: none;">
+                <div class="result-card">
+                  <h3>📊 Analysis Summary</h3>
+                  <div id="resultData"></div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="{{ url_for('static', filename='main.js') }}"></script>
+</body>
+</html>
