@@ -1,0 +1,23 @@
+# Virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Model files
+
+
+# Database
+*.db
+
+# OS/system files
+.DS_Store
+Thumbs.db
+
+# Environment variables
+.env
+
+# IDE folders
+.vscode/
+.idea/
