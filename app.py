@@ -5,6 +5,7 @@ import threading
 import numpy as np
 import requests
 import google.generativeai as genai
+import cv2
 
 from flask import Flask, render_template, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -35,91 +36,64 @@ CLASS_NAMES = [
     "Tomato_healthy",
 ]
 
-# --------------- API Key for Gemini ----------------
-GEMINI_API_KEY ="Your gemini api key"
+# --------------- Pesticide Stores in Hyderabad ----------------
+# Bing Maps search link for pesticide stores in Hyderabad
+PESTICIDE_STORES_SEARCH_LINK = "https://www.bing.com/maps?q=pesticide+stores+in+hyderabad"
 
-# Initialize Gemini only if API key is available
+# --------------- API Key for Gemini ----------------
+GEMINI_API_KEY = ""
 gemini_model = None
 gemini_available = False
 
 if GEMINI_API_KEY:
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        
-        # Try to list available models first
         try:
             available = list(genai.list_models())
-            print(f"Found {len(available)} available models")
-            
-            # Find models that support generateContent
             for m in available:
                 if 'generateContent' in m.supported_generation_methods:
                     model_name = m.name.replace('models/', '')
                     try:
                         gemini_model = genai.GenerativeModel(model_name)
-                        # Quick test
-                        test_response = gemini_model.generate_content("Hi")
+                        gemini_model.generate_content("Hi")
                         gemini_available = True
-                        print(f"✓ Gemini API initialized successfully with model: {model_name}")
                         break
                     except:
                         continue
-        except Exception as list_error:
-            print(f"Could not list models: {str(list_error)[:100]}")
-            
-            # Fallback: try common model names without 'models/' prefix
+        except:
             model_names = [
                 "gemini-1.5-flash-001",
                 "gemini-1.5-pro-001",
-                "gemini-1.0-pro",
                 "gemini-pro",
-                "models/gemini-1.5-flash",
-                "models/gemini-pro"
             ]
-            
             for model_name in model_names:
                 try:
                     gemini_model = genai.GenerativeModel(model_name)
-                    test_response = gemini_model.generate_content("Hi")
+                    gemini_model.generate_content("Hi")
                     gemini_available = True
-                    print(f"✓ Gemini API initialized successfully with model: {model_name}")
                     break
-                except Exception as model_error:
+                except:
                     continue
-        
-        if not gemini_available:
-            print("✗ No working Gemini model found")
-            print("  Your API key might be invalid or expired")
-            print("  Get a new key from: https://aistudio.google.com/app/apikey")
-            
-    except Exception as e:
-        print(f"✗ Gemini API initialization failed: {str(e)}")
+    except:
         gemini_available = False
-else:
-    print("⚠ GEMINI_API_KEY not found in environment variables")
-    print("  Set it using: export GEMINI_API_KEY=your_key_here")
 
 # --------------- Flask Setup ----------------
 app = Flask(__name__)
 
 # --------------- Database Init ----------------
 def init_db():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE,
-                email TEXT UNIQUE,
-                password TEXT
-            )
-        """)
-        conn.commit()
-        conn.close()
-        print("✓ Database initialized successfully")
-    except Exception as e:
-        print(f"✗ Database initialization failed: {str(e)}")
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE,
+            email TEXT UNIQUE,
+            password TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
 
 init_db()
 
@@ -135,6 +109,10 @@ def signup_page():
 @app.route("/home")
 def home_page():
     return render_template("home.html")
+
+@app.route("/store")
+def store_page():
+    return render_template("store.html")
 
 # --------------- Signup API ----------------
 @app.route("/api/signup", methods=["POST"])
@@ -156,14 +134,13 @@ def signup():
                     (username, email, hashed_pw))
         conn.commit()
         conn.close()
-        
+
         return jsonify({"success": True})
-        
+
     except sqlite3.IntegrityError:
         return jsonify({"error": "Username or email already exists"}), 409
-    except Exception as e:
-        print(f"Signup error: {str(e)}")
-        return jsonify({"error": "An error occurred during signup"}), 500
+    except:
+        return jsonify({"error": "Signup failed"}), 500
 
 # --------------- Login API ----------------
 @app.route("/api/login", methods=["POST"])
@@ -173,195 +150,636 @@ def login():
         email = data.get("email")
         password = data.get("password")
 
-        if not email or not password:
-            return jsonify({"error": "Missing fields"}), 400
-
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
         cur.execute("SELECT username, password FROM users WHERE email=?", (email,))
-        row = cur.fetchone()
+        user = cur.fetchone()
         conn.close()
 
-        if not row:
+        if not user:
             return jsonify({"error": "User not found"}), 404
 
-        username, hashed_pw = row
+        username, hashed_pw = user
 
         if not check_password_hash(hashed_pw, password):
             return jsonify({"error": "Incorrect password"}), 401
 
         return jsonify({"success": True, "username": username})
-        
-    except Exception as e:
-        print(f"Login error: {str(e)}")
-        return jsonify({"error": "An error occurred during login"}), 500
+
+    except:
+        return jsonify({"error": "Login failed"}), 500
 
 # --------------- Load Model ----------------
 try:
     model = load_model(MODEL_PATH, compile=False)
     predict_lock = threading.Lock()
-    print("✓ ML Model loaded successfully")
-except Exception as e:
-    print(f"✗ Model loading failed: {str(e)}")
-    print(f"  Make sure '{MODEL_PATH}' exists")
+except:
     model = None
 
 # --------------- Image Preprocessing ----------------
 def read_imagefile(file_bytes):
-    try:
-        img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-        img = img.resize(IMG_SIZE)
-        arr = np.array(img).astype("float32")
-        arr = np.expand_dims(arr, 0)
-        return preprocess_input(arr)
-    except Exception as e:
-        print(f"Image preprocessing error: {str(e)}")
-        raise
+    img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+    img = img.resize(IMG_SIZE)
+    arr = np.array(img).astype("float32")
+    arr = np.expand_dims(arr, 0)
+    return preprocess_input(arr)
 
-# --------------- Fallback Recommendations ----------------
-FALLBACK_RECOMMENDATIONS = {
-    "Pepper__bell___Bacterial_spot": """
-• **Disease**: Bacterial spot causes dark spots on leaves and fruits, reducing yield quality.
-• **Organic Treatment**: Remove infected leaves, spray with copper-based organic fungicide or neem oil.
-• **Chemical Treatment**: Apply copper hydroxide or streptomycin sulfate as per label instructions.
-• **Prevention**: Use disease-free seeds, avoid overhead watering, maintain proper plant spacing for air circulation.
-""",
-    "Potato___Early_blight": """
-• **Disease**: Early blight causes dark brown spots on older leaves, leading to defoliation.
-• **Organic Treatment**: Remove affected leaves, spray with Bacillus subtilis or copper fungicides.
-• **Chemical Treatment**: Apply chlorothalonil or mancozeb fungicides every 7-10 days.
-• **Prevention**: Practice crop rotation, avoid wetting foliage, use resistant varieties.
-""",
-    "Potato___Late_blight": """
-• **Disease**: Late blight causes water-soaked lesions on leaves and tubers, can destroy entire crops quickly.
-• **Organic Treatment**: Remove infected plants immediately, spray copper fungicides preventively.
-• **Chemical Treatment**: Apply metalaxyl, chlorothalonil, or mancozeb at first signs.
-• **Prevention**: Plant certified disease-free seeds, ensure good drainage, avoid overhead irrigation.
-""",
-    "Tomato_Bacterial_spot": """
-• **Disease**: Bacterial spot causes small dark spots on leaves and fruits, reducing marketability.
-• **Organic Treatment**: Spray copper-based fungicides or biological controls like Bacillus.
-• **Chemical Treatment**: Use copper hydroxide or copper sulfate as preventive spray.
-• **Prevention**: Use disease-free transplants, practice crop rotation, avoid working with wet plants.
-""",
-    "Tomato_Early_blight": """
-• **Disease**: Early blight creates concentric ring patterns on lower leaves, causing yellowing and drop.
-• **Organic Treatment**: Prune affected leaves, apply neem oil or baking soda solution (1 tbsp/liter).
-• **Chemical Treatment**: Spray with chlorothalonil or mancozeb fungicides weekly.
-• **Prevention**: Mulch around plants, water at base, maintain 2-year crop rotation.
-""",
-    "Tomato_Late_blight": """
-• **Disease**: Late blight causes rapid browning and death of leaves and fruits, especially in humid weather.
-• **Organic Treatment**: Remove infected parts immediately, spray copper fungicides preventively.
-• **Chemical Treatment**: Apply metalaxyl-M or dimethomorph at first symptom.
-• **Prevention**: Improve air circulation, avoid overhead watering, use resistant varieties like Mountain Magic.
-""",
-    "Tomato_Leaf_Mold": """
-• **Disease**: Leaf mold causes yellow patches on upper leaf surface with olive-green mold below.
-• **Organic Treatment**: Increase ventilation, spray with sulfur or copper fungicides.
-• **Chemical Treatment**: Use chlorothalonil or mancozeb, ensure good greenhouse ventilation.
-• **Prevention**: Reduce humidity below 85%, prune for airflow, use resistant hybrids.
-""",
-    "Tomato_Septoria_leaf_spot": """
-• **Disease**: Septoria causes small circular spots with gray centers on lower leaves first.
-• **Organic Treatment**: Remove infected leaves, spray with copper fungicide or neem oil.
-• **Chemical Treatment**: Apply chlorothalonil or mancozeb every 7-10 days.
-• **Prevention**: Mulch to prevent soil splash, water at base, practice 3-year crop rotation.
-""",
-    "Tomato_Spider_mites_Two_spotted_spider_mite": """
-• **Disease**: Spider mites cause yellow stippling on leaves and fine webbing, weakening plants.
-• **Organic Treatment**: Spray with strong water jet, apply neem oil or insecticidal soap.
-• **Chemical Treatment**: Use abamectin or spiromesifen, rotate products to prevent resistance.
-• **Prevention**: Monitor regularly, maintain humidity, introduce predatory mites like Phytoseiulus.
-""",
-    "Tomato__Target_Spot": """
-• **Disease**: Target spot creates concentric ring lesions on leaves, stems, and fruits.
-• **Organic Treatment**: Remove infected plant parts, apply copper fungicides or biological controls.
-• **Chemical Treatment**: Spray with chlorothalonil or azoxystrobin.
-• **Prevention**: Improve air circulation, avoid leaf wetness, use resistant varieties.
-""",
-    "Tomato__Tomato_YellowLeaf__Curl_Virus": """
-• **Disease**: Viral disease causing upward leaf curling, yellowing, and stunted growth.
-• **Organic Treatment**: No cure - remove infected plants, control whitefly vectors with neem oil.
-• **Chemical Treatment**: Use imidacloprid or thiamethoxam to control whitefly populations.
-• **Prevention**: Use virus-free transplants, install yellow sticky traps, plant resistant varieties like Tyking.
-""",
-    "Tomato__Tomato_mosaic_virus": """
-• **Disease**: Viral infection causing mottled light and dark green patterns on leaves.
-• **Organic Treatment**: No cure - remove infected plants immediately to prevent spread.
-• **Chemical Treatment**: No chemical cure available, focus on sanitation and prevention.
-• **Prevention**: Disinfect tools with 10% bleach, wash hands after handling tobacco, use resistant varieties.
-""",
-    "healthy": """
-• **Status**: Your plant appears healthy! Continue good practices.
-• **Maintenance**: Water regularly at base, ensure 6-8 hours sunlight, apply balanced fertilizer monthly.
-• **Monitoring**: Check weekly for pests or disease signs on undersides of leaves.
-• **Prevention**: Maintain proper spacing, prune dead leaves, practice crop rotation annually.
-"""
+# --------------- LEAF DETECTION ----------------
+def is_leaf_image(img_arr):
+    """Rejects non-leaf images."""
+    img = img_arr[0]
+    img_uint8 = img.astype("uint8")
+
+    hsv = cv2.cvtColor(img_uint8, cv2.COLOR_RGB2HSV)
+
+    # Green range
+    lower_green = np.array([25, 40, 40])
+    upper_green = np.array([95, 255, 255])
+
+    mask = cv2.inRange(hsv, lower_green, upper_green)
+    green_ratio = np.sum(mask > 0) / (img.shape[0] * img.shape[1])
+
+    # Threshold: at least 25% should be green
+    return green_ratio > 0.25
+
+# --------------- Structured Disease Information ----------------
+DISEASE_INFO = {
+    "Pepper__bell___Bacterial_spot": {
+        "disease_name": "Bacterial Spot",
+        "plant_type": "Bell Pepper",
+        "severity": "Medium",
+        "symptoms": [
+            "Small, dark brown spots on leaves",
+            "Yellow halo around spots",
+            "Spots on fruits and stems",
+            "Defoliation in severe cases"
+        ],
+        "causes": [
+            "Xanthomonas bacteria",
+            "Warm, humid conditions",
+            "Water splashing on leaves",
+            "Poor air circulation"
+        ],
+        "treatment_steps": [
+            "Remove and destroy infected leaves",
+            "Apply copper-based bactericides",
+            "Improve air circulation",
+            "Avoid overhead watering",
+            "Use disease-resistant varieties"
+        ],
+        "recommended_products": [
+            "Copper Hydroxide spray",
+            "Streptomycin sulfate",
+            "Bacillus subtilis bio-fungicide"
+        ],
+        "prevention": [
+            "Use certified disease-free seeds",
+            "Practice crop rotation",
+            "Maintain proper plant spacing",
+            "Water at soil level"
+        ]
+    },
+    "Pepper__bell___healthy": {
+        "disease_name": "Healthy Plant",
+        "plant_type": "Bell Pepper",
+        "severity": "None",
+        "symptoms": [],
+        "causes": [],
+        "treatment_steps": [
+            "Continue regular watering",
+            "Maintain proper fertilization",
+            "Monitor for early disease signs"
+        ],
+        "recommended_products": [
+            "Balanced NPK fertilizer",
+            "Organic compost"
+        ],
+        "prevention": [
+            "Regular monitoring",
+            "Proper nutrition",
+            "Good cultural practices"
+        ]
+    },
+    "Potato___Early_blight": {
+        "disease_name": "Early Blight",
+        "plant_type": "Potato",
+        "severity": "Medium to High",
+        "symptoms": [
+            "Brown spots with concentric rings (target pattern)",
+            "Yellowing around spots",
+            "Lower leaves affected first",
+            "Stem lesions"
+        ],
+        "causes": [
+            "Alternaria solani fungus",
+            "Warm temperatures (24-29°C)",
+            "High humidity",
+            "Plant stress"
+        ],
+        "treatment_steps": [
+            "Remove infected leaves immediately",
+            "Apply fungicide (Mancozeb or Chlorothalonil)",
+            "Ensure proper spacing between plants",
+            "Mulch to prevent soil splash",
+            "Improve drainage"
+        ],
+        "recommended_products": [
+            "Mancozeb 75% WP",
+            "Chlorothalonil",
+            "Azoxystrobin"
+        ],
+        "prevention": [
+            "Use resistant varieties",
+            "Crop rotation (3-4 years)",
+            "Avoid overhead irrigation",
+            "Remove plant debris"
+        ]
+    },
+    "Potato___Late_blight": {
+        "disease_name": "Late Blight",
+        "plant_type": "Potato",
+        "severity": "High (Very Serious)",
+        "symptoms": [
+            "Water-soaked lesions on leaves",
+            "White fuzzy growth on leaf undersides",
+            "Brown-black lesions on stems",
+            "Tuber rot"
+        ],
+        "causes": [
+            "Phytophthora infestans",
+            "Cool, wet weather",
+            "High humidity",
+            "Poor air circulation"
+        ],
+        "treatment_steps": [
+            "Apply systemic fungicides immediately",
+            "Remove and destroy infected plants",
+            "Improve ventilation",
+            "Avoid irrigation during cool, humid periods",
+            "Harvest early if disease is severe"
+        ],
+        "recommended_products": [
+            "Metalaxyl + Mancozeb",
+            "Cymoxanil + Mancozeb",
+            "Dimethomorph"
+        ],
+        "prevention": [
+            "Plant certified disease-free tubers",
+            "Use resistant varieties",
+            "Destroy volunteer plants",
+            "Monitor weather conditions"
+        ]
+    },
+    "Potato___healthy": {
+        "disease_name": "Healthy Plant",
+        "plant_type": "Potato",
+        "severity": "None",
+        "symptoms": [],
+        "causes": [],
+        "treatment_steps": [
+            "Maintain regular care routine",
+            "Continue proper watering and fertilization",
+            "Monitor for disease signs"
+        ],
+        "recommended_products": [
+            "Balanced NPK fertilizer",
+            "Potassium-rich fertilizer for tuber development"
+        ],
+        "prevention": [
+            "Regular monitoring",
+            "Proper nutrition",
+            "Good cultural practices"
+        ]
+    },
+    "Tomato_Bacterial_spot": {
+        "disease_name": "Bacterial Spot",
+        "plant_type": "Tomato",
+        "severity": "Medium to High",
+        "symptoms": [
+            "Small dark spots on leaves",
+            "Spots with yellow halos",
+            "Fruit lesions",
+            "Leaf drop"
+        ],
+        "causes": [
+            "Xanthomonas bacteria",
+            "Warm, wet conditions",
+            "Contaminated seeds or transplants"
+        ],
+        "treatment_steps": [
+            "Remove infected plant parts",
+            "Apply copper-based sprays",
+            "Use bactericides",
+            "Improve air circulation",
+            "Reduce leaf wetness"
+        ],
+        "recommended_products": [
+            "Copper hydroxide",
+            "Copper oxychloride",
+            "Streptomycin (where allowed)"
+        ],
+        "prevention": [
+            "Use disease-free seeds",
+            "Avoid overhead watering",
+            "Practice crop rotation",
+            "Disinfect tools"
+        ]
+    },
+    "Tomato_Early_blight": {
+        "disease_name": "Early Blight",
+        "plant_type": "Tomato",
+        "severity": "Medium",
+        "symptoms": [
+            "Dark brown spots with concentric rings",
+            "Yellow tissue around spots",
+            "Lower leaves affected first",
+            "Fruit spots near stem"
+        ],
+        "causes": [
+            "Alternaria solani fungus",
+            "Warm humid weather",
+            "Plant stress"
+        ],
+        "treatment_steps": [
+            "Remove affected leaves",
+            "Apply fungicides regularly",
+            "Mulch around plants",
+            "Stake plants for better air flow",
+            "Water at base of plants"
+        ],
+        "recommended_products": [
+            "Mancozeb",
+            "Chlorothalonil",
+            "Copper fungicides"
+        ],
+        "prevention": [
+            "Crop rotation",
+            "Use resistant varieties",
+            "Proper spacing",
+            "Remove plant debris"
+        ]
+    },
+    "Tomato_Late_blight": {
+        "disease_name": "Late Blight",
+        "plant_type": "Tomato",
+        "severity": "Very High (Critical)",
+        "symptoms": [
+            "Large brown water-soaked lesions",
+            "White mold on leaf undersides",
+            "Rapid plant collapse",
+            "Brown firm fruit rot"
+        ],
+        "causes": [
+            "Phytophthora infestans",
+            "Cool wet weather",
+            "High humidity"
+        ],
+        "treatment_steps": [
+            "Apply systemic fungicides immediately",
+            "Remove infected plants completely",
+            "Destroy plant debris",
+            "Avoid overhead watering",
+            "Improve drainage"
+        ],
+        "recommended_products": [
+            "Metalaxyl + Mancozeb",
+            "Cymoxanil",
+            "Dimethomorph + Mancozeb"
+        ],
+        "prevention": [
+            "Plant resistant varieties",
+            "Ensure good air circulation",
+            "Monitor weather forecasts",
+            "Remove volunteer plants"
+        ]
+    },
+    "Tomato_Leaf_Mold": {
+        "disease_name": "Leaf Mold",
+        "plant_type": "Tomato",
+        "severity": "Medium",
+        "symptoms": [
+            "Yellow spots on upper leaf surface",
+            "Olive-green to brown mold on undersides",
+            "Leaf curling and death",
+            "Reduced fruit quality"
+        ],
+        "causes": [
+            "Passalora fulva fungus",
+            "High humidity (>85%)",
+            "Poor air circulation",
+            "Greenhouse conditions"
+        ],
+        "treatment_steps": [
+            "Reduce humidity below 85%",
+            "Improve ventilation",
+            "Remove infected leaves",
+            "Apply fungicides",
+            "Space plants properly"
+        ],
+        "recommended_products": [
+            "Chlorothalonil",
+            "Copper fungicides",
+            "Biological fungicides (Bacillus)"
+        ],
+        "prevention": [
+            "Use resistant varieties",
+            "Maintain low humidity",
+            "Proper plant spacing",
+            "Greenhouse ventilation"
+        ]
+    },
+    "Tomato_Septoria_leaf_spot": {
+        "disease_name": "Septoria Leaf Spot",
+        "plant_type": "Tomato",
+        "severity": "Medium",
+        "symptoms": [
+            "Small circular spots with gray centers",
+            "Dark borders around spots",
+            "Tiny black dots in center (pycnidia)",
+            "Lower leaves affected first"
+        ],
+        "causes": [
+            "Septoria lycopersici fungus",
+            "Warm wet weather",
+            "Water splash on leaves"
+        ],
+        "treatment_steps": [
+            "Remove infected lower leaves",
+            "Apply fungicides preventively",
+            "Mulch to prevent soil splash",
+            "Water at plant base",
+            "Stake plants"
+        ],
+        "recommended_products": [
+            "Chlorothalonil",
+            "Mancozeb",
+            "Copper fungicides"
+        ],
+        "prevention": [
+            "Crop rotation (3 years)",
+            "Remove plant debris",
+            "Avoid overhead watering",
+            "Use disease-free transplants"
+        ]
+    },
+    "Tomato_Spider_mites_Two_spotted_spider_mite": {
+        "disease_name": "Two-Spotted Spider Mite",
+        "plant_type": "Tomato",
+        "severity": "Medium to High",
+        "symptoms": [
+            "Tiny yellow or white spots on leaves",
+            "Fine webbing on leaves",
+            "Bronzing of leaves",
+            "Leaf drop in severe cases"
+        ],
+        "causes": [
+            "Spider mite infestation",
+            "Hot dry weather",
+            "Dusty conditions",
+            "Stressed plants"
+        ],
+        "treatment_steps": [
+            "Spray plants with strong water stream",
+            "Apply miticides or insecticidal soap",
+            "Introduce predatory mites",
+            "Increase humidity",
+            "Remove heavily infested leaves"
+        ],
+        "recommended_products": [
+            "Abamectin",
+            "Spiromesifen",
+            "Insecticidal soap",
+            "Neem oil"
+        ],
+        "prevention": [
+            "Regular monitoring",
+            "Maintain plant health",
+            "Avoid water stress",
+            "Keep area dust-free"
+        ]
+    },
+    "Tomato__Target_Spot": {
+        "disease_name": "Target Spot",
+        "plant_type": "Tomato",
+        "severity": "Medium",
+        "symptoms": [
+            "Brown spots with concentric rings",
+            "Target-like appearance",
+            "Affects leaves, stems, and fruit",
+            "Defoliation in severe cases"
+        ],
+        "causes": [
+            "Corynespora cassiicola fungus",
+            "Warm humid conditions",
+            "Extended leaf wetness"
+        ],
+        "treatment_steps": [
+            "Remove infected plant parts",
+            "Apply fungicides",
+            "Improve air circulation",
+            "Reduce leaf wetness",
+            "Mulch around plants"
+        ],
+        "recommended_products": [
+            "Chlorothalonil",
+            "Mancozeb",
+            "Azoxystrobin"
+        ],
+        "prevention": [
+            "Use resistant varieties",
+            "Proper plant spacing",
+            "Crop rotation",
+            "Avoid overhead irrigation"
+        ]
+    },
+    "Tomato__Tomato_YellowLeaf__Curl_Virus": {
+        "disease_name": "Tomato Yellow Leaf Curl Virus",
+        "plant_type": "Tomato",
+        "severity": "Very High (Critical)",
+        "symptoms": [
+            "Upward curling of leaves",
+            "Yellowing of leaf margins",
+            "Stunted plant growth",
+            "Reduced fruit production",
+            "Small, deformed fruits"
+        ],
+        "causes": [
+            "Virus transmitted by whiteflies",
+            "Warm climate",
+            "High whitefly population"
+        ],
+        "treatment_steps": [
+            "Remove and destroy infected plants",
+            "Control whitefly population with insecticides",
+            "Use yellow sticky traps",
+            "Apply neem oil",
+            "Use virus-resistant varieties"
+        ],
+        "recommended_products": [
+            "Imidacloprid",
+            "Thiamethoxam",
+            "Acetamiprid",
+            "Yellow sticky traps",
+            "Reflective mulch"
+        ],
+        "prevention": [
+            "Plant virus-resistant varieties",
+            "Control whitefly from early stage",
+            "Remove weeds (virus reservoirs)",
+            "Use insect-proof nets",
+            "Avoid planting near infected areas"
+        ]
+    },
+    "Tomato__Tomato_mosaic_virus": {
+        "disease_name": "Tomato Mosaic Virus",
+        "plant_type": "Tomato",
+        "severity": "High",
+        "symptoms": [
+            "Mottled light and dark green on leaves",
+            "Leaf distortion",
+            "Stunted growth",
+            "Reduced fruit yield",
+            "Fruit discoloration"
+        ],
+        "causes": [
+            "Highly contagious virus",
+            "Mechanical transmission",
+            "Contaminated tools or hands",
+            "Infected seeds"
+        ],
+        "treatment_steps": [
+            "Remove and destroy infected plants",
+            "Disinfect tools with 10% bleach solution",
+            "Wash hands thoroughly",
+            "Use virus-free seeds",
+            "No chemical cure available"
+        ],
+        "recommended_products": [
+            "10% bleach solution for tools",
+            "Milk spray (may reduce spread)",
+            "Virus-free certified seeds"
+        ],
+        "prevention": [
+            "Use certified disease-free seeds",
+            "Sanitize tools regularly",
+            "Avoid touching plants when wet",
+            "Control weeds",
+            "Don't use tobacco products near plants"
+        ]
+    },
+    "Tomato_healthy": {
+        "disease_name": "Healthy Plant",
+        "plant_type": "Tomato",
+        "severity": "None",
+        "symptoms": [],
+        "causes": [],
+        "treatment_steps": [
+            "Continue regular care",
+            "Maintain consistent watering",
+            "Provide adequate nutrition"
+        ],
+        "recommended_products": [
+            "Balanced NPK fertilizer (10-10-10)",
+            "Calcium supplement for fruit development",
+            "Compost or organic matter"
+        ],
+        "prevention": [
+            "Regular inspection",
+            "Proper watering",
+            "Good cultural practices",
+            "Monitor for pests"
+        ]
+    }
 }
 
-# --------------- Gemini Recommendation ----------------
-def generate_ai_recommendation(disease_label: str):
-    # Try Gemini API first
-    if gemini_available and gemini_model:
-        prompt = f"""
-You are an agriculture expert in India. Disease detected: {disease_label}.
+# --------------- Generate Fertilizer Recommendation using Gemini ----------------
+def get_fertilizer_recommendation(disease_label, plant_type):
+    """Get fertilizer recommendation ONLY from Gemini API - No fallbacks"""
+    
+    if not gemini_available or not gemini_model:
+        return {
+            "success": False,
+            "error": "AI recommendation service is currently unavailable. Please try again later."
+        }
+    
+    try:
+        if "healthy" in disease_label.lower():
+            prompt = f"""For a healthy {plant_type} plant, recommend:
+1. Best fertilizers for optimal growth (NPK ratios and specific products available in India)
+2. Application schedule and dosage
+3. Organic alternatives
+4. Micronutrients needed
 
-Write 4–6 short bullet points:
-1. Simple explanation of the disease.
-2. Natural/organic treatment options.
-3. Chemical treatment (only generic names, with proper safety warnings).
-4. Preventive methods for future.
+Provide specific product names available in Indian market."""
+        else:
+            prompt = f"""For {plant_type} affected by {disease_label}, recommend:
+1. Fertilizers to boost plant immunity and recovery (specific NPK ratios and products)
+2. Micronutrients that help fight this disease
+3. Application timing and dosage
+4. Organic options for treatment support
+5. Fertilizers to avoid during disease treatment
 
-Use simple English, bullet points, and no long paragraphs.
-"""
-        try:
-            response = gemini_model.generate_content(prompt)
-            if response and response.text:
-                return response.text.strip()
-        except Exception as e:
-            print(f"Gemini API error: {str(e)}")
-            print("Falling back to local recommendations...")
+Provide specific product names available in Indian agricultural market."""
+        
+        response = gemini_model.generate_content(prompt)
+        
+        return {
+            "success": True,
+            "recommendation": response.text,
+            "disease": disease_label,
+            "plant": plant_type
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Unable to generate recommendation: {str(e)}"
+        }
+
+# --------------- Generate Disease Information ----------------
+def get_disease_information(disease_label):
+    """Get structured disease information from database"""
     
-    # Fallback to local recommendations
-    for key in FALLBACK_RECOMMENDATIONS:
-        if key.lower() in disease_label.lower():
-            return FALLBACK_RECOMMENDATIONS[key]
+    # Get structured information
+    disease_data = DISEASE_INFO.get(disease_label, {})
     
-    # Check if healthy
-    if "healthy" in disease_label.lower():
-        return FALLBACK_RECOMMENDATIONS["healthy"]
+    if not disease_data:
+        # Fallback for unknown diseases
+        disease_data = {
+            "disease_name": disease_label.replace("_", " ").title(),
+            "plant_type": "Unknown",
+            "severity": "Unknown",
+            "symptoms": ["Please consult an expert for accurate diagnosis"],
+            "causes": ["Unknown"],
+            "treatment_steps": ["Consult with local agricultural extension office"],
+            "recommended_products": ["Consult agricultural store"],
+            "prevention": ["Regular monitoring and good cultural practices"]
+        }
     
-    # Generic fallback
-    return """
-• **Disease Detected**: Please consult with a local agriculture expert for specific treatment.
-• **General Care**: Remove affected leaves, ensure proper watering and sunlight.
-• **Monitoring**: Check plants daily for any changes in symptoms.
-• **Expert Help**: Contact your nearest agriculture extension office for personalized advice.
-"""
+    return disease_data
 
 # --------------- Predict API ----------------
 @app.route("/predict", methods=["POST"])
 def predict():
     try:
         if model is None:
-            return jsonify({"error": "Model not loaded. Please check server logs."}), 500
-        
+            return jsonify({"error": "ML model not loaded"}), 500
+
         if "file" not in request.files:
-            return jsonify({"error": "No image uploaded"}), 400
+            return jsonify({"error": "No file uploaded"}), 400
 
         file = request.files["file"]
-        if file.filename == "":
-            return jsonify({"error": "No file selected"}), 400
-
         image_bytes = file.read()
-        
-        # Validate image
-        if len(image_bytes) == 0:
-            return jsonify({"error": "Empty file uploaded"}), 400
-        
+
         img_arr = read_imagefile(image_bytes)
 
+        # -------- LEAF VALIDATION --------
+        if not is_leaf_image(img_arr):
+            return jsonify({
+                "error": "The uploaded image does not look like a leaf. Please upload a clear leaf image."
+            }), 400
+
+        # -------- PREDICTION --------
         with predict_lock:
             predictions = model.predict(img_arr)[0]
 
@@ -369,65 +787,54 @@ def predict():
         disease_label = CLASS_NAMES[index]
         confidence = float(predictions[index])
 
-        recommendation = generate_ai_recommendation(disease_label)
-
-        return jsonify({
-            "label": disease_label,
-            "confidence": confidence,
-            "ai_recommendation": recommendation,
-            "gemini_used": gemini_available
-        })
+        # Get disease information from database
+        disease_info = get_disease_information(disease_label)
+        plant_type = disease_info.get("plant_type", "Unknown")
         
+        # Get fertilizer recommendation from Gemini API ONLY
+        fertilizer_info = get_fertilizer_recommendation(disease_label, plant_type)
+
+        # Prepare response
+        response_data = {
+            "success": True,
+            "prediction": {
+                "label": disease_label,
+                "confidence": round(confidence * 100, 2),
+                "confidence_percentage": f"{round(confidence * 100, 2)}%"
+            },
+            "disease_information": disease_info,
+            "fertilizer_recommendation": fertilizer_info,
+            "pesticide_stores": {
+                "bing_maps_link": PESTICIDE_STORES_SEARCH_LINK,
+                "description": "Click to find pesticide stores near you in Hyderabad"
+            },
+            "location": "Hyderabad, Telangana",
+            "recommendations": {
+                "immediate_action": disease_info.get("treatment_steps", [])[:3] if disease_info.get("treatment_steps") else [],
+                "products_needed": disease_info.get("recommended_products", []),
+                "severity_level": disease_info.get("severity", "Unknown")
+            }
+        }
+
+        return jsonify(response_data)
+
     except Exception as e:
-        print(f"Prediction error: {str(e)}")
-        return jsonify({"error": f"Prediction failed: {str(e)}"}), 500
+        return jsonify({
+            "success": False,
+            "error": f"Prediction failed: {str(e)}"
+        }), 500
 
 # --------------- Health Check API ----------------
-@app.route("/api/health", methods=["GET"])
+@app.route("/api/health")
 def health_check():
     return jsonify({
         "status": "ok",
         "model_loaded": model is not None,
+        "database_ok": os.path.exists(DB_PATH),
         "gemini_available": gemini_available,
-        "database_ok": os.path.exists(DB_PATH)
+        "location": "Hyderabad, Telangana"
     })
-
-# --------------- List Available Gemini Models ----------------
-@app.route("/api/list-models", methods=["GET"])
-def list_models():
-    if not GEMINI_API_KEY:
-        return jsonify({"error": "No API key configured"}), 400
-    
-    try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        models = genai.list_models()
-        available_models = []
-        for m in models:
-            if 'generateContent' in m.supported_generation_methods:
-                available_models.append({
-                    "name": m.name,
-                    "display_name": m.display_name,
-                    "description": m.description
-                })
-        return jsonify({"models": available_models})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 # --------------- Run Server ----------------
 if __name__ == "__main__":
-    print("\n" + "="*50)
-    print("Plant Disease Detection System")
-    print("="*50)
-    print(f"Model loaded: {'✓' if model else '✗'}")
-    print(f"Gemini API: {'✓' if gemini_available else '✗ (using fallback recommendations)'}")
-    print(f"Database: {'✓' if os.path.exists(DB_PATH) else '✗'}")
-    print("="*50 + "\n")
-    
-    if not gemini_available:
-        print("⚠ To enable Gemini AI recommendations:")
-        print("  1. Get API key from: https://aistudio.google.com/app/apikey")
-        print("  2. Set environment variable:")
-        print("     export GEMINI_API_KEY=your_key_here")
-        print("  3. Restart the application\n")
-    
     app.run(port=5000, debug=True)

@@ -21,3 +21,9 @@ Thumbs.db
 # IDE folders
 .vscode/
 .idea/
+node_modules/ 
+__pycache__/ 
+.env 
+node_modules/ 
+__pycache__/ 
+.env 
